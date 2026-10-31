@@ -55,8 +55,6 @@ type TestResult = {
 
 type StepState = "wait" | "active" | "done" | "fail";
 
-/// 本产品自己的站点（aiquick.hsfp.cn）。不再导流到别的产品。
-const SITE = "https://aiquick.hsfp.cn/";
 const STORE_URL = "https://apps.microsoft.com/search?query=Codex";
 const OFFICIAL_URL = "https://chatgpt.com/codex";
 
@@ -80,6 +78,8 @@ export default function App() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [ssoInfo, setSsoInfo] = useState<string | null>(null);
   const [ssoError, setSsoError] = useState<string | null>(null);
+  /// 用户选择「跳过 CLI，用我已有的桌面版」
+  const [skipCli, setSkipCli] = useState(false);
   const logRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -159,13 +159,15 @@ export default function App() {
     setSaveError(null);
     setSaveInfo(null);
     try {
+      // 选了「跳过，用我已有的桌面版」就自动写桌面版配置（用户不用再勾选任何东西）
+      const wantDesktop = alsoDesktop || skipCli;
       const r = await invoke<{ path: string; backup_path: string | null; changed: boolean }>(
         "write_config",
-        { key, alsoDesktop },
+        { key, alsoDesktop: wantDesktop },
       );
       setSaveInfo(
-        alsoDesktop
-          ? `已写入 ${r.path}，并把同一把 Key 写进桌面版的配置${r.backup_path ? `（原文件已备份）` : ""}`
+        wantDesktop
+          ? `已写入 ${r.path}，并把同一把 Key 写进桌面版配置${r.backup_path ? `（原文件已备份）` : ""}`
           : `已写入 ${r.path}`,
       );
       await refresh();
@@ -233,7 +235,7 @@ export default function App() {
       if (!r?.ok) return;
     }
     try {
-      const msg = await invoke<string>("launch_codex");
+      const msg = await invoke<string>(skipCli ? "launch_desktop" : "launch_codex");
       setLaunchInfo(msg);
     } catch (e) {
       setLaunchInfo(`启动失败：${e}`);
@@ -250,7 +252,9 @@ export default function App() {
     }
   };
 
-  const ready = !!env?.codex.prepared;
+  const cliPrepared = !!env?.codex.prepared;
+  const desktopFound = !!env?.system.desktop_found;
+  const ready = cliPrepared || skipCli;
   const saved = !!config?.has_key;
   const passed = !!test?.ok;
 
@@ -261,20 +265,26 @@ export default function App() {
       title: "检查环境",
       state: env ? "done" : "active",
       detail: env
-        ? ready
-          ? `已备好 Codex ${env.codex.version ?? ""}`.trim()
-          : "还没准备好 Codex（不用安装，下载解压即用）"
+        ? env.system.desktop_supported
+          ? env.system.desktop_found
+            ? `${env.system.desktop_detail}${env.system.desktop_package ? ` · ${env.system.desktop_package}` : ""}`
+            : `${env.system.desktop_detail}（没有也不影响）`
+          : "当前系统没有 Codex 桌面版"
         : "正在检查…",
     });
     list.push({
       n: 2,
       title: "准备 Codex",
       state: ready ? "done" : preparing ? "active" : env ? "active" : "wait",
-      detail: ready
-        ? "已解压到本工具自己的目录，随时可以运行"
-        : preparing
-          ? "正在下载解压…"
-          : "点按钮从国内镜像直接下载，不安装、不写 PATH",
+      detail: skipCli
+        ? "已跳过：直接用你机器上装好的桌面版"
+        : cliPrepared
+          ? `已备好 Codex CLI ${env?.codex.version ?? ""}`.trim()
+          : preparing
+            ? "正在下载解压…"
+            : desktopFound
+              ? "可以直接跳过，用你已有的桌面版"
+              : "点按钮从国内镜像直接下载（约 100MB），不安装、不写 PATH",
     });
     list.push({
       n: 3,
@@ -321,12 +331,30 @@ export default function App() {
 
         {env && !ready && (
           <>
-            <button className="btn primary big" disabled={preparing} onClick={doPrepare}>
-              {preparing ? "正在下载，请稍候…" : "准备 Codex"}
-            </button>
+            {desktopFound ? (
+              <>
+                <button className="btn primary big" onClick={() => setSkipCli(true)}>
+                  跳过，用我已有的桌面版
+                </button>
+                <button className="btn secondary" disabled={preparing} onClick={doPrepare}>
+                  {preparing
+                    ? "正在下载，请稍候…"
+                    : "也下载一份 Codex CLI（约 100MB，想在终端里用才需要）"}
+                </button>
+              </>
+            ) : (
+              <button className="btn primary big" disabled={preparing} onClick={doPrepare}>
+                {preparing ? "正在下载，请稍候…" : "准备 Codex"}
+              </button>
+            )}
             <p className="hint small">
               从国内镜像下载（约 100MB），解压到本工具自己的目录，不写 PATH、不进系统目录。
             </p>
+            {skipCli && (
+              <button className="btn ghost small" onClick={() => setSkipCli(false)}>
+                还是下载一份 CLI
+              </button>
+            )}
             {log.length > 0 && (
               <div className="log" ref={logRef}>
                 {log.map((l, i) => (
@@ -399,14 +427,21 @@ export default function App() {
             {saveInfo && <p className="ok small">{saveInfo}</p>}
             {saveError && <ErrBox text={saveError} />}
 
-            <label className="check small">
-              <input
-                type="checkbox"
-                checked={alsoDesktop}
-                onChange={(e) => setAlsoDesktop(e.target.checked)}
-              />
-              桌面版也要用这个 Key（会备份并只改必要几行）
-            </label>
+            {skipCli ? (
+              <p className="hint small">
+                保存时会自动把这把 Key 写进桌面版配置（先备份，只改 model / model_provider /
+                [model_providers.hsfp] 几行，其它不动）。
+              </p>
+            ) : (
+              <label className="check small">
+                <input
+                  type="checkbox"
+                  checked={alsoDesktop}
+                  onChange={(e) => setAlsoDesktop(e.target.checked)}
+                />
+                桌面版也要用这个 Key（会备份并只改必要几行）
+              </label>
+            )}
 
             <button className="btn secondary" disabled={testing || (!saved && !key.trim())} onClick={doTest}>
               {testing ? "正在实测…" : "测一下"}
@@ -434,14 +469,26 @@ export default function App() {
             )}
 
             <button className="btn primary big" disabled={testing} onClick={doLaunch}>
-              {testing ? "正在实测…" : passed ? "启动 Codex" : "测一下并启动"}
+              {testing
+                ? "正在实测…"
+                : passed
+                  ? skipCli
+                    ? "打开 Codex 桌面版"
+                    : "启动 Codex"
+                  : "测一下并启动"}
             </button>
             {!passed && !testing && (
-              <p className="hint small">会先真跑一次确认能用，通了才打开终端（免得进去一脸懵）。</p>
+              <p className="hint small">
+                {skipCli
+                  ? "会先用你的 Key 真跑一次（直连验证），确认能用再帮你打开桌面版。"
+                  : "会先真跑一次确认能用，通了才打开终端（免得进去一脸懵）。"}
+              </p>
             )}
-            <p className="hint small">
-              第一次进 Codex 它会问「是否信任当前文件夹」，按回车同意即可；之后直接聊天就能用。
-            </p>
+            {!skipCli && (
+              <p className="hint small">
+                第一次进 Codex 它会问「是否信任当前文件夹」，按回车同意即可；之后直接聊天就能用。
+              </p>
+            )}
             {launchInfo && <p className="ok small">{launchInfo}</p>}
           </>
         )}
@@ -454,7 +501,8 @@ export default function App() {
         {showDesktop && (
           <div className="desktop">
             <p className="small">
-              Codex 桌面版（含新版 ChatGPT 桌面应用）约 1GB，本工具不代下（太慢），请用下面任一方式自行安装：
+              Codex 桌面版（含新版 ChatGPT 桌面应用）约 1GB，本工具不代下（太慢），请用下面任一方式自行安装。
+              装好后本工具只需一步就能让它用上你的 Key。
             </p>
             <ol className="small">
               <li>
@@ -463,9 +511,6 @@ export default function App() {
               </li>
               <li>
                 官方下载页：<a onClick={() => open(OFFICIAL_URL)}>{OFFICIAL_URL}</a>
-              </li>
-              <li>
-                官方站：<a onClick={() => open(SITE)}>{SITE}</a>
               </li>
             </ol>
             <p className="small">

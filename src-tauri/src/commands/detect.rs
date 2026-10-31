@@ -103,6 +103,16 @@ fn path_lookup(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// 测试钩子：`AIQUICK_FAKE_DESKTOP=1` 时假装机器上装了桌面版，
+/// 用于在非 Windows 环境验证「检测到桌面版 → 跳过 CLI → 自动写桌面版配置」这条分支。
+fn fake_desktop_for_tests() -> Option<DesktopStatus> {
+    match std::env::var("AIQUICK_FAKE_DESKTOP").ok()?.as_str() {
+        "1" => Some(parse_appx_output("OpenAI.Codex|26.1027.3384.0")),
+        "0" => Some(parse_appx_output("")),
+        _ => None,
+    }
+}
+
 fn check_system() -> SystemCodex {
     let mut s = SystemCodex::default();
     // 只读探测：用户系统里可能另外装过 Codex，界面里只作提示，不用它运行。
@@ -137,7 +147,7 @@ fn check_system() -> SystemCodex {
         s.cli_path = Some(p.display().to_string());
     }
 
-    let desktop = check_desktop();
+    let desktop = fake_desktop_for_tests().unwrap_or_else(check_desktop);
     s.desktop_supported = desktop.supported;
     s.desktop_found = desktop.found;
     s.desktop_detail = desktop.detail;

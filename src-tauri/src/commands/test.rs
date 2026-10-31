@@ -314,7 +314,7 @@ pub fn run_test_blocking(key: Option<String>) -> TestResult {
         Ok((200, body, cmdline)) => TestResult {
             ok: true,
             category: "ok".into(),
-            message: "HTTP 实测通过（本机 Codex 还没准备好，仅验证了 Key 与模型）".to_string(),
+            message: "已用你的 Key 直连验证：Key 与模型可用（本机没装 CLI，桌面版会用同一个 Key）".to_string(),
             reply: Some(short(
                 &extract_text(&body).unwrap_or_else(|| "OK".into()),
                 200,

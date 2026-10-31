@@ -130,6 +130,42 @@ pub fn launch_codex() -> Result<String, String> {
     }
 }
 
+/// 「打开 Codex 桌面版」：走 Appx 的 shell:AppsFolder（MSIX 应用不支持直接 Start-Process exe）。
+#[cfg(target_os = "windows")]
+pub fn launch_desktop() -> Result<String, String> {
+    let script = r#"$ErrorActionPreference='Stop'
+$p = Get-AppxPackage | Where-Object { $_.Name -like 'OpenAI.Codex*' -or $_.Name -like '*ChatGPT*' } | Select-Object -First 1
+if (-not $p) { throw 'no-desktop-app' }
+$id = (Get-AppxPackageManifest $p).Package.Applications.Application.Id
+if ($id -is [array]) { $id = $id[0] }
+Start-Process explorer.exe ('shell:AppsFolder\' + $p.PackageFamilyName + '!' + $id)
+Write-Output $p.Name"#;
+    let mut cmd = Command::new("powershell");
+    cmd.args([
+        "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,
+    ]);
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let out = cmd.output().map_err(|e| format!("调用 PowerShell 失败：{e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stdout).to_string()
+            + &String::from_utf8_lossy(&out.stderr);
+        if err.contains("no-desktop-app") {
+            return Err("没找到已安装的 Codex 桌面版（含新版 ChatGPT 桌面应用）".to_string());
+        }
+        return Err(format!("打开桌面版失败：{}", err.trim()));
+    }
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(format!("已打开 {}", if name.is_empty() { "Codex 桌面版".to_string() } else { name }))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn launch_desktop() -> Result<String, String> {
+    Err("当前系统没有 Codex 桌面版应用可启动".to_string())
+}
+
 /// 「清理并退出」：删掉我们自己产生的全部文件。用户自己的 `~/.codex` 不碰。
 pub fn cleanup() -> Result<String, String> {
     super::prepare::cleanup()

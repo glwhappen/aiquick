@@ -69,6 +69,11 @@ async fn launch_codex() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn launch_desktop() -> Result<String, String> {
+    launch::launch_desktop()
+}
+
+#[tauri::command]
 async fn cleanup(app: tauri::AppHandle) -> Result<String, String> {
     // 绿色版：卸载时把 scheme 注册也撤掉，不在系统里留东西。
     let _ = &app;
@@ -173,6 +178,7 @@ pub fn run() {
             write_config,
             run_test,
             launch_codex,
+            launch_desktop,
             cleanup,
             open_url
         ])
@@ -248,6 +254,7 @@ pub fn headless(args: &[String]) -> i32 {
         "register-scheme" => scheme::register(),
         "unregister-scheme" => scheme::unregister(),
         "launch" => launch::launch_codex(),
+        "launch-desktop" => launch::launch_desktop(),
         "cleanup" => launch::cleanup(),
         other => Err(format!("未知子命令：{other}")),
     };
