@@ -104,25 +104,104 @@ Authorization = "Bearer sk-..."
 
 可用环境变量 `AIQUICK_HOME` 覆盖（自动化验收就用它 + 假 `HOME`）。
 
-## 下载哪个、解压后点哪个
+## 下载即用（不用解压）
 
-下载页：<https://github.com/glwhappen/aiquick/releases/latest>
+Release 资产命名：Windows 是裸 `aiquick.exe`；Linux 是裸 `aiquick` 与 `aiquick-<版本>-linux-x86_64.AppImage`；
+macOS 因为系统限制只能打包，文件名是 `aiquick-<版本>-macos-aarch64.app.zip`。
 
-Release 资产命名固定为 **`aiquick-<版本>-<平台>-<架构>.zip`**，平台取 `windows` / `macos` / `linux`，
-架构取 `x86_64` / `aarch64`：
-
-| 你的机器 | 下载 | 解压后点 |
+| 你的机器 | 下载 | 怎么用 |
 |---|---|---|
-| Windows 10/11（绝大多数） | `aiquick-<版本>-windows-x86_64.zip` | `aiquick.exe`（双击即跑，无需安装） |
-| Apple 芯片 Mac（M1/M2/M3…） | `aiquick-<版本>-macos-aarch64.zip` | `aiquick.app`（拖到任意目录，首次右键 → 打开） |
-| Intel Mac | 暂未出（可在 Actions 里加 `macos-13`） | — |
-| Linux x86_64 | `aiquick-<版本>-linux-x86_64.zip` | `aiquick`（`chmod +x` 后运行） |
+| Windows 10/11 | `aiquick.exe` | **双击即用**（单文件、免安装；需要系统自带 WebView2） |
+| Linux x86_64（较新发行版） | `aiquick` | `chmod +x aiquick && ./aiquick` |
+| Linux x86_64（老发行版 / glibc 太低） | `aiquick-<版本>-linux-x86_64.AppImage` | `chmod +x` 后双击或直接运行 |
+| Apple 芯片 Mac | `aiquick-<版本>-macos-aarch64.app.zip` | 解压得到 `aiquick.app`，拖到任意目录；未签名，首次右键 → 打开 |
+| Intel Mac | 暂未出（可在 CI 加 `macos-13` job） | — |
 
-不需要下载 `.deb` / `.dmg` / 安装器——我们只出绿色版，解压即用，删目录即卸载。
+没有 `.deb` / `.dmg` / 安装向导——我们只出绿色版：下载即可运行，删掉即卸载（数据都在自己的目录里）。
 
-- **Windows** 依赖系统自带的 WebView2（Win11 与较新的 Win10 已内置）。
-- **macOS** 未签名，首次打开会被 Gatekeeper 拦一下：右键 → 打开，或 `xattr -dr com.apple.quarantine aiquick.app`。
+- **Windows** 依赖系统自带 WebView2（Win11 与较新的 Win10 已内置）。
+- **macOS** 未签名，首次打开被 Gatekeeper 拦一下：右键 → 打开，或 `xattr -dr com.apple.quarantine aiquick.app`。
 - **Linux** 需要 webkit2gtk-4.1（多数桌面发行版已有）。
+
+## 领 Key：内嵌 SSO（不再外跳）
+
+点「登录并自动领取 Key」→ 系统浏览器打开 Authentik 登录页 → 回环回调 `http://127.0.0.1:17321/callback`
+→ 程序拿 id_token 向 provisioning 端点换一把 Key → **直接写进隔离配置，用户不复制粘贴**。
+
+- OIDC：Public client + PKCE(S256)，issuer `https://auth.hsfp.cn/application/o/aiquick/`，client_id `aiquick-desktop`
+  （provider pk=63 / application slug=aiquick，`sub_mode=hashed_user_id`）。**没有 client_secret，仓库里没有任何凭据。**
+- 服务端环节：桌面程序连不到 new-api 的 Postgres，所以「查/建用户 + 建 token」由 provisioning 端点做
+  （默认 `POST https://aiquick.hsfp.cn/api/provision-key`，入参 `{id_token, group, name}`，出参 `{key:"sk-…"}`）。
+  逻辑沿用 `/root/hsfp-code-site/app.py` 的 `ensure_user()` / `ensure_token()`（`group=半价`、`unlimited_quota=true`、
+  `expired_time=-1`、`model_limits_enabled=false`、幂等复用同名 token）。
+- 可用环境变量覆盖，便于自测/自托管：
+  `AIQUICK_OIDC_ISSUER` / `AIQUICK_OIDC_CLIENT_ID` / `AIQUICK_REDIRECT_URI` / `AIQUICK_PROVISION_URL` / `AIQUICK_TOKEN_GROUP`。
+- 自检：`aiquick --headless sso`（会真的拉一次 discovery，打印端点与 PKCE 参数）。
+- 兜底：SSO 失败时仍可手动粘贴一把 Key；**任何提示里都不再出现别的产品域名**。
+
+## deep link（可选旁路）：从网页回填 Key
+
+程序注册了 URL scheme **`aiquick`**。网页端的 Key 卡片上点「填入 aiquick」会跳到：
+
+```
+aiquick://set-key?key=sk-xxxx&group=半价
+```
+
+本程序收到后**自动填入输入框**并提示「已从网页填入 Key，点『测一下』验证」，用户不用复制粘贴。
+
+- 参数名固定：scheme=`aiquick`、host/path=`set-key`、参数 `key` / `group`（官网侧按这个对齐）。
+- 幂等：重复点只覆盖同一个 Key；程序已在运行时会复用同一个窗口（`single-instance`）。
+- 安全：**日志里只有「尾号 xxxx（长度 n）」，`rg 'sk-' 日志` 是空的**；非法/缺参数的链接忽略并给中性提示，不崩。
+- 手动粘贴的兜底路径一直都在。
+
+### 注册与撤销
+
+scheme 由程序自己注册（不依赖安装器，绿色版也能用）：
+
+- **Windows**：`HKCU\Software\Classes\aiquick`（当前用户，不需要管理员）
+- **Linux**：`~/.local/share/applications/aiquick-handler.desktop` + `xdg-mime default`
+- **macOS**：由 `.app` 的 `CFBundleURLTypes` 提供（打包时写入）
+
+「清理并退出」会把它一起撤掉；也可以手动：
+`aiquick --headless register-scheme` / `--headless unregister-scheme`。
+
+命令行自检：`aiquick --headless deeplink 'aiquick://set-key?key=sk-xxx&group=半价'`
+
+## 写进配置的东西
+
+`<数据目录>/aiquick/tools/codex/home/config.toml`：
+
+```toml
+model = "deepseek-flash"
+model_provider = "hsfp"
+
+[model_providers.hsfp]
+name = "HSFP"
+base_url = "https://new-api.hsfp.cn/v1"
+wire_api = "responses"
+
+[model_providers.hsfp.http_headers]
+Authorization = "Bearer sk-..."
+```
+
+用 `http_headers` 内联 Key，**不用 `env_key`**：桌面版 App 不继承 shell 环境变量，用 `env_key` 会静默失效。
+
+### 桌面版（可选，默认不做）
+
+桌面版读的是固定的 `~/.codex/config.toml`，没法用 `CODEX_HOME` 隔离，这是唯一例外。
+只有勾选「桌面版也要用这个 Key」时才会写它：先备份 `config.toml.bak.<时间戳>`，
+再按 TOML 段做外科式修改，只增改 `model` / `model_provider` / `[model_providers.hsfp]`，
+用户原有的 `[desktop]`、`[projects.*]`、`[sandbox_workspace_write]` 等段逐字符保留。
+
+## 数据目录在哪
+
+| 平台 | 路径 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\aiquick` |
+| macOS | `~/Library/Application Support/aiquick` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/aiquick` |
+
+可用环境变量 `AIQUICK_HOME` 覆盖（自动化验收就用它 + 假 `HOME`）。
 
 ## 开发 / 构建
 

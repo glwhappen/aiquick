@@ -16,6 +16,8 @@ type SystemCodex = {
   desktop_supported: boolean;
   desktop_found: boolean;
   desktop_detail: string;
+  desktop_package: string | null;
+  desktop_version: string | null;
 };
 
 type EnvStatus = {
@@ -371,6 +373,22 @@ export default function App() {
             {ssoError && <ErrBox text={ssoError} />}
             {deepLinkInfo && <p className="ok small">{deepLinkInfo}</p>}
 
+            {env.system.desktop_supported && (
+              <div className={`sys ${env.system.desktop_found ? "sys-ok" : "sys-miss"}`}>
+                {env.system.desktop_found ? (
+                  <>
+                    ✅ {env.system.desktop_detail}
+                    <span className="muted"> · {env.system.desktop_package}</span>
+                  </>
+                ) : (
+                  <>
+                    ⚪ {env.system.desktop_detail}
+                    <span className="muted">（没有也不影响，本工具自带一份 Codex）</span>
+                  </>
+                )}
+              </div>
+            )}
+
             <button
               className="btn primary"
               disabled={saving || key.trim().length === 0}
@@ -436,7 +454,7 @@ export default function App() {
         {showDesktop && (
           <div className="desktop">
             <p className="small">
-              桌面版约 1GB，本工具不代下（太慢），请用下面任一方式自行安装：
+              Codex 桌面版（含新版 ChatGPT 桌面应用）约 1GB，本工具不代下（太慢），请用下面任一方式自行安装：
             </p>
             <ol className="small">
               <li>
@@ -451,14 +469,12 @@ export default function App() {
               </li>
             </ol>
             <p className="small">
-              装好后勾选上面的「桌面版也要用这个 Key」，再打开应用，左上角切到 <b>Codex 模式</b>
-              （普通对话不走这里的 Key）。
+              这说的是 <b>Codex 桌面版（含新版 ChatGPT 桌面应用）</b>：装好后勾选上面的「桌面版也要用这个 Key」，
+              再打开应用，左上角切到 <b>Codex 模式</b>（普通对话不走这里的 Key）。
             </p>
             <p className="small muted">
               {env?.system.desktop_supported
-                ? env.system.desktop_found
-                  ? `已检测到桌面版：${env.system.desktop_detail}`
-                  : `未检测到桌面版：${env.system.desktop_detail}`
+                ? env.system.desktop_detail
                 : "当前系统没有 Codex 桌面版"}
               {config?.desktop_configured ? " · 桌面版配置已写入" : ""}
             </p>

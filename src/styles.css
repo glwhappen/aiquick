@@ -357,3 +357,19 @@ details.tiny > summary {
   flex-direction: column;
   gap: 2px;
 }
+
+.sys {
+  font-size: 13px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: #fafbfc;
+  word-break: break-word;
+}
+.sys-ok {
+  border-color: #bfe3d5;
+  background: #f2fbf7;
+}
+.sys-miss {
+  color: #4b5563;
+}

@@ -14,6 +14,19 @@ pub struct CodexStatus {
 }
 
 #[derive(Serialize, Clone, Default)]
+pub struct DesktopStatus {
+    /// 当前平台是否支持检测桌面版（Linux 不检测）
+    pub supported: bool,
+    pub found: bool,
+    /// 界面上直接显示的一句话（例如「已检测到 Codex 桌面版 26.1027.3384.0」）
+    pub detail: String,
+    /// Appx 包名（Windows）/ .app 路径（macOS）
+    pub package: Option<String>,
+    /// 版本号（能从 Appx 读到时）
+    pub version: Option<String>,
+}
+
+#[derive(Serialize, Clone, Default)]
 pub struct SystemCodex {
     /// 用户系统里另外还装着的 Codex CLI（只读探测，不用它跑）
     pub cli_found: bool,
@@ -23,6 +36,8 @@ pub struct SystemCodex {
     pub desktop_supported: bool,
     pub desktop_found: bool,
     pub desktop_detail: String,
+    pub desktop_package: Option<String>,
+    pub desktop_version: Option<String>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -123,15 +138,19 @@ fn check_system() -> SystemCodex {
     }
 
     let desktop = check_desktop();
-    s.desktop_supported = desktop.0;
-    s.desktop_found = desktop.1;
-    s.desktop_detail = desktop.2;
+    s.desktop_supported = desktop.supported;
+    s.desktop_found = desktop.found;
+    s.desktop_detail = desktop.detail;
+    s.desktop_package = desktop.package;
+    s.desktop_version = desktop.version;
     s
 }
 
 #[cfg(target_os = "windows")]
 fn check_desktop() -> (bool, bool, String) {
-    let script = "Get-AppxPackage | Where-Object { $_.Name -like 'OpenAI.Codex*' -or $_.Name -like '*ChatGPT*' } | Select-Object -First 1 -ExpandProperty Name";
+    // 覆盖两种正式名字：早期独立 Codex 版（OpenAI.Codex）与新版合并的 ChatGPT 桌面版（*ChatGPT*）。
+    // 输出 `Name|Version`，界面就能显示「已检测到 … 26.1027.3384.0」。
+    let script = "Get-AppxPackage | Where-Object { $_.Name -like 'OpenAI.Codex*' -or $_.Name -like '*ChatGPT*' } | Select-Object -First 1 | ForEach-Object { \"$($_.Name)|$($_.Version)\" }";
     let mut cmd = Command::new("powershell");
     cmd.args([
         "-NoProfile",
@@ -145,31 +164,64 @@ fn check_desktop() -> (bool, bool, String) {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let found = cmd
+    let raw = cmd
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
-    if found.is_empty() {
-        (true, false, "未检测到已安装的桌面版".to_string())
+    if raw.is_empty() {
+        DesktopStatus {
+            supported: true,
+            found: false,
+            detail: "没检测到 Codex 桌面版，可以到 Microsoft Store 搜 Codex 安装".to_string(),
+            package: None,
+            version: None,
+        }
     } else {
-        (true, true, found)
+        let mut parts = raw.split('|');
+        let name = parts.next().unwrap_or("").trim().to_string();
+        let ver = parts.next().unwrap_or("").trim().to_string();
+        DesktopStatus {
+            supported: true,
+            found: true,
+            detail: format!("已检测到 Codex 桌面版{}", if ver.is_empty() { String::new() } else { format!(" {ver}") }),
+            package: Some(name),
+            version: if ver.is_empty() { None } else { Some(ver) },
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn check_desktop() -> (bool, bool, String) {
+fn check_desktop() -> DesktopStatus {
     for p in ["/Applications/Codex.app", "/Applications/ChatGPT.app"] {
         if std::path::Path::new(p).exists() {
-            return (true, true, p.to_string());
+            return DesktopStatus {
+                supported: true,
+                found: true,
+                detail: "已检测到 Codex 桌面版".to_string(),
+                package: Some(p.to_string()),
+                version: None,
+            };
         }
     }
-    (true, false, "未检测到 /Applications 下的 Codex.app 或 ChatGPT.app".to_string())
+    DesktopStatus {
+        supported: true,
+        found: false,
+        detail: "没检测到 Codex 桌面版，可以从官网下载安装".to_string(),
+        package: None,
+        version: None,
+    }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn check_desktop() -> (bool, bool, String) {
-    (false, false, "当前系统没有 Codex 桌面版".to_string())
+fn check_desktop() -> DesktopStatus {
+    DesktopStatus {
+        supported: false,
+        found: false,
+        detail: "当前系统没有 Codex 桌面版".to_string(),
+        package: None,
+        version: None,
+    }
 }
 
 pub fn check_environment() -> EnvStatus {
